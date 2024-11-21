@@ -1,6 +1,6 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const User = require('../models/user');
+const User = require('../models/User');
 const RideShare = require('../models/RideShare'); // Ensure you import your RideShare model
 const jwtUtils = require('../utils/jwtUtils');
 
