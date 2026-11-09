@@ -12,110 +12,114 @@ REST + WebSocket API for a ride-safety sharing app: travelers share their cab de
 
 This is the standalone backend of the Ride-Sharing Platform. It is an Express server with:
 
-- **JWT authentication** and role-based access for three roles: `traveler`, `traveler_companion` and `admin`
-- **Sequelize models** for users, shared rides and feedback, stored in PostgreSQL. This version connects over SSL, which suits hosted Postgres such as Supabase.
-- **A WebSocket server** (`ws`) on the same port. Clients connect per trip (`?tripId=...`), and a trip is marked inactive when a client reports that the destination was reached.
+- **JWT authentication** and role checks for `traveler`, `traveler_companion` and `admin`
+- **Sequelize models** for users, shared rides and feedback, stored in PostgreSQL (SSL by default, which suits Supabase). SQLite can be used for local development and tests.
+- **An authenticated WebSocket server** (`ws`) on the same port. The trip owner streams positions to the companion, and companions get "nearby" and "trip complete" notifications.
 
 ### Related repositories
 
 | Repository | What it contains |
 |------------|------------------|
-| [ride-sharing-platform-backend](https://github.com/VamsiKrishnaThota03/ride-sharing-platform-backend) | **This repo**: the API, split out for separate deployment |
+| [ride-sharing-platform-backend](https://github.com/VamsiKrishnaThota03/ride-sharing-platform-backend) | **This repo**: the API, deployed separately |
 | [ride-sharing-platform-frontend](https://github.com/VamsiKrishnaThota03/ride-sharing-platform-frontend) | React client that uses this API (via `REACT_APP_BACKEND_URL`) |
-| [Ride-Sharing-Platform](https://github.com/VamsiKrishnaThota03/Ride-Sharing-Platform) | Original monorepo with the frontend and backend together (earlier, localhost-only version) |
+| [Ride-Sharing-Platform](https://github.com/VamsiKrishnaThota03/Ride-Sharing-Platform) | Monorepo with the same frontend and backend together |
 
 ## Features
 
-- Sign-up with bcrypt password hashing (`bcryptjs`) and login that returns a 1-hour JWT (contains id, email, role and mobile number)
-- On login, companions also get the rides that were shared with their mobile number
-- Travelers can save a shared ride (trip ID, driver name, driver phone, cab number, companion mobile) and list their own shared rides, newest first
-- Companions can list every ride shared with their mobile number
-- Travelers and companions can submit feedback (rating and an optional comment) for a ride
-- Admin-only endpoints list all users and all feedback
-- WebSocket per trip: connections are rejected if `tripId` is missing or the trip is not active, and a `destinationReached` message sets the ride to inactive
-- `sequelize.sync()` creates the tables on startup
+- Sign-up with bcrypt password hashing and validation; login returns a 1-hour JWT (id, email, role, mobile number)
+- Self-service sign-up only for travelers and companions; admins come from `ADMIN_EMAILS`
+- Password hashes are never returned (sign-up response, profile, admin user list)
+- Travelers save shared rides (unique trip IDs), list them and mark them completed
+- Companions list rides shared with their mobile number; companions with no rides can still log in
+- Feedback (rating 1-5 and an optional comment) only from the traveler or the companion of that ride
+- Admin endpoints for all users and all feedback
+- WebSocket: token required, only the trip owner, its companion or an admin can join; malformed messages are ignored
+- JSON errors, health route, CORS allow list, `PORT` from the environment
 
 ## Tech stack
 
-- Node.js, Express 4, `body-parser`, `cors`
-- Sequelize 6 with `pg` / `pg-hstore` (PostgreSQL)
+- Node.js 18+, Express 4, `cors`, `express-validator`
+- Sequelize 6 with `pg` / `pg-hstore` (PostgreSQL), `sqlite3` for development and tests
 - `jsonwebtoken`, `bcryptjs`
 - `ws` for WebSockets
 - `dotenv` for configuration
+- `node:test` for tests
 
 ## Project structure
 
 ```
 .
-├── server.js               # Express app, route mounting, WebSocket server, DB sync
-├── config/db.js            # Sequelize connection (PostgreSQL over SSL)
+├── server.js               # checks config, connects the DB, starts HTTP + WebSocket
+├── app.js                  # Express app: CORS, routes, 404 and error handlers
+├── realtime.js             # trip WebSocket and companion notifications
+├── config/
+│   ├── env.js              # requireEnv / listEnv helpers
+│   └── db.js               # Sequelize connection (DATABASE_URL, DB_* or SQLite)
 ├── models/                 # User, RideShare, Feedback
-├── controllers/            # auth, ride, feedback, admin, user handlers
+├── controllers/            # auth, user, ride, feedback, admin
 ├── routes/                 # authRoutes, rideRoutes, feedbackRoutes, adminRoutes
 ├── middleware/
-│   ├── authMiddleware.js   # Verifies Bearer JWT
-│   └── adminMiddleware.js  # Verifies JWT and checks the allowed roles
-└── utils/jwtUtils.js       # Token generation
+│   ├── authMiddleware.js   # Bearer JWT check and requireRole(...)
+│   └── validate.js         # express-validator error handler
+├── utils/jwtUtils.js       # sign / verify tokens
+└── test/api.test.js        # API and WebSocket tests on in-memory SQLite
 ```
 
 ## Getting started
-
-### Prerequisites
-
-- Node.js 18+ and npm
-- A PostgreSQL database that accepts SSL connections (for example a Supabase project)
-
-### Install
 
 ```bash
 git clone https://github.com/VamsiKrishnaThota03/ride-sharing-platform-backend.git
 cd ride-sharing-platform-backend
 npm install
+cp .env.example .env     # then fill in the values
+npm run dev              # nodemon; or: npm start  -> http://localhost:5001
+npm test                 # no database needed
 ```
+
+For a quick local run without PostgreSQL, set `DB_DIALECT=sqlite` (and remove the `DB_*` lines) in `.env`.
 
 ### Environment variables
 
-Create a `.env` file in the project root:
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `JWT_SECRET` | Yes | Long random string used to sign JWTs |
+| `DATABASE_URL` | One DB option | Full PostgreSQL URL, for example `postgres://user:password@host:5432/postgres` |
+| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | One DB option | PostgreSQL connection parts (the Supabase pooler uses port `6543`) |
+| `DB_SSL` | No | `false` to connect to a local PostgreSQL without SSL (default `true`) |
+| `DB_DIALECT`, `DB_STORAGE` | One DB option | `DB_DIALECT=sqlite` uses a local SQLite file (`DB_STORAGE`, default `dev.sqlite`). For local development only; `sqlite3` is a dev dependency |
+| `ADMIN_EMAILS` | No | Comma-separated emails that get the admin role when they sign up |
+| `CORS_ORIGIN` | No | Comma-separated allowed browser origins, for example `https://ride-sharing-platform-frontend.vercel.app`. Empty allows every origin |
+| `PORT` | No | HTTP and WebSocket port, default `5001` |
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `DB_HOST` | PostgreSQL host | `<your-db-host>` |
-| `DB_PORT` | PostgreSQL port | `5432` |
-| `DB_NAME` | Database name | `<your-db-name>` |
-| `DB_USER` | Database user | `<your-db-user>` |
-| `DB_PASSWORD` | Database password | `<your-db-password>` |
-| `JWT_SECRET` | Secret used to sign and verify JWTs | `<a-long-random-string>` |
-| `PORT` | Read from `.env`, but the server currently listens on a fixed port, **5001** | `5001` |
-
-### Run
-
-```bash
-npm start          # node server.js -> http://localhost:5001
-# or, for auto-reload during development:
-npx nodemon server.js
-```
+The server exits with a clear message if `JWT_SECRET` or a database setting is missing, and creates the tables on start (`sequelize.sync()`).
 
 ## API
 
-All REST routes are prefixed with `/api`. Protected routes expect `Authorization: Bearer <token>`.
+REST routes are prefixed with `/api`. Protected routes expect `Authorization: Bearer <token>`. Errors are returned as `{ "message": "..." }`.
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| `POST` | `/api/signup` | none | Register a user (`name`, `email`, `mobile_number`, `password`, `role`) |
-| `POST` | `/api/login` | none | Log in; returns a JWT and role (companions also get their shared rides) |
-| `GET` | `/api/user/profile` | any logged-in user | Current user's profile (password excluded) |
-| `POST` | `/api/rides/share` | any logged-in user | Save a shared ride (`tripId`, `driverName`, `driverPhone`, `cabNumber`, `companionMobile`) |
-| `GET` | `/api/rides/shared` | any logged-in user | Rides shared by the current user, newest first |
-| `GET` | `/api/rides/companion/details` | any logged-in user | Rides whose `companionMobile` matches the current user's mobile number |
-| `POST` | `/api/feedback/send` | `traveler`, `traveler_companion` | Submit feedback (`rideShareId`, `rating`, `comment`) |
-| `GET` | `/api/admin/users` | `admin` | List all users |
-| `GET` | `/api/admin/feedbacks` | `admin` | List all feedback |
+| `GET` | `/` | none | Health check |
+| `POST` | `/api/signup` | none | Register (`name`, `email`, `mobile_number` (10 digits), `password` (6+), `role`: `traveler` or `traveler_companion`) |
+| `POST` | `/api/login` | none | Log in; returns `token`, `role`, `mobile_number` (companions also get `rideShareDetails`) |
+| `GET` | `/api/user/profile` | any user | Current profile (password excluded) |
+| `PUT` | `/api/user/profile` | any user | Update `name`, `email`, `mobile_number` |
+| `POST` | `/api/rides/share` | `traveler` | Save a shared ride (`tripId`, `driverName`, `driverPhone`, `cabNumber`, `companionMobile`) |
+| `GET` | `/api/rides/shared` | any user | Rides shared by the current user, newest first |
+| `POST` | `/api/rides/expire` | `traveler` (owner) | Mark one of your rides as completed (`tripId`) |
+| `GET` | `/api/rides/companion/details` | `traveler_companion` | Rides shared with your mobile number |
+| `POST` | `/api/feedback/send` | `traveler`, `traveler_companion` | Feedback (`rideShareId` = trip ID, `rating` 1-5, `comment`) for a ride you shared or were the companion on |
+| `GET` | `/api/admin/users` | `admin` | All users (passwords excluded) |
+| `GET` | `/api/admin/feedbacks` | `admin` | All feedback |
 
 ### WebSocket
 
-| URL | Behaviour |
-|-----|-----------|
-| `ws://<host>:5001/?tripId=<tripId>` | Accepted only if an active ride with that `tripId` exists. Sending `{"type":"destinationReached"}` marks the ride inactive. |
+The WebSocket server runs on the same port. Every connection needs a valid token.
+
+| URL | Who | Behaviour |
+|-----|-----|-----------|
+| `ws://<host>/?tripId=<id>&token=<jwt>` | Trip owner, its companion or an admin | Joins an active trip. The owner sends `{"type":"updatePosition","lat":..,"lon":..}` (relayed to the other viewers as `position`), `{"type":"nearby"}` and `{"type":"destinationReached"}` (marks the ride inactive). |
+| `ws://<host>/?token=<jwt>` | Companion | Receives `nearbyNotification` and `tripComplete` messages for rides shared with them |
 
 ## Data model
 
@@ -123,9 +127,21 @@ All REST routes are prefixed with `/api`. Protected routes expect `Authorization
 |-------|--------|
 | `User` | `name`, `email` (unique), `mobile_number`, `password` (hashed), `role` (`traveler` / `traveler_companion` / `admin`) |
 | `RideShare` | `tripId`, `driverName`, `driverPhone`, `cabNumber`, `companionMobile`, `userId`, `isActive` |
-| `Feedback` | `rideShareId`, `userId`, `rating`, `comment` |
+| `Feedback` | `rideShareId` (trip ID), `userId`, `rating` (1-5), `comment` |
 
 All tables include Sequelize `createdAt` / `updatedAt` timestamps.
+
+## Deployment notes (Render)
+
+- Set `JWT_SECRET`, the database settings (`DATABASE_URL` or `DB_*`), `ADMIN_EMAILS` and `CORS_ORIGIN`. `PORT` is provided by Render.
+- `.env` with live Supabase credentials and the JWT secret used to be committed. It is no longer tracked but is still in the git history: rotate the database password and the JWT secret.
+- The WebSocket now requires `?token=`; deploy the updated frontend together with this backend.
+
+## Known limitations
+
+- No rate limiting on login or sign-up, and no refresh tokens.
+- Ride expiry after 60 minutes is shown by the frontend only; the server keeps a ride active until the owner ends it or the trip reaches its destination.
+- `npm audit` reports a moderate issue in Sequelize's `uuid` dependency (fix requires a breaking change) and issues in the `sqlite3` build tooling (development only).
 
 ## Contact
 
