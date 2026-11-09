@@ -1,3 +1,5 @@
+> **📦 Archived:** this repo is kept for history. Active development continues in the combined repository **[Ride-Sharing-Platform](https://github.com/VamsiKrishnaThota03/Ride-Sharing-Platform)**, which contains the same frontend and backend code.
+
 # Ride-Sharing Platform: Backend
 
 REST + WebSocket API for a ride-safety sharing app: travelers share their cab details with a companion, companions follow the trip and leave feedback, admins review users and feedback.
